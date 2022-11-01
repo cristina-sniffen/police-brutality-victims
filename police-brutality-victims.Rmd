@@ -1,0 +1,567 @@
+---
+title: "Investigating Disproportionality in Race and Socio-Economic Status of Police Brutality Victims across US States"
+author: "Cristina Sniffen, Kulsoom Rizavi, Sophie Hurewitz, Carter Vanderloo"
+output: pdf_document
+---
+```{r load-packages, include = FALSE}
+library(tidyverse) 
+library(viridisLite)
+library(viridis)
+library(ggridges)
+library(tidymodels)
+library(knitr)
+``` 
+```{r loading-library-spatial, include = FALSE}
+library(tidycensus)
+library(usdata)
+library(reshape2)
+library(tigris)
+library(sf)
+```
+```{r load-data, include = FALSE}
+police_brutality <- read_csv("data/police-brutality.csv")
+```
+
+## Introduction and Data
+**Background and Significance: **
+
+According to Amnesty International, the term "police brutality" is used "to refer to various human rights violations by police," such as "beatings, racial abuse, unlawful killings, torture, or indiscriminate use of riot control agents at protests." (webpage linked in references) Police brutality and racism are deeply intertwined, especially in America. According to a 2019 study published in the Proceedings of the National Academy of Science of the United States of America, "police violence is a leading cause of death for young men in the United States." Additionally, "over the life course, about 1 in every 1,000 black men can expect to be killed by police." This study also emphasizes how the risk of police brutality is highest for individuals between the ages of 20 and 35 years. After the death of George Floyd in the summer of 2020, many American citizens have started or continued to grapple with the systemic racism and inequities present in this country and how such systems are tied to police brutality and police killings. 
+
+**Data: **
+
+The Police Brutality directory links the Guardian's database on police killings to census data from the American Community Survey, and identifies U.S. police brutality incidents in 2015. It was compiled in 2016 by the Guardian, who got the data from an FBI program in which law enforcement agencies voluntarily submit their annual count of “killings of a felon in the line of duty”. Therefore, while this dataset includes the vast majority of 2015 police brutality cases, there may be additional incidents that were not submitted by law enforcement agencies.
+
+The `police_brutality` dataset has 467 observations of police brutality incidents with 34 variables. We plan to use the variables `raceethnicity` (race and ethnicity of victim), `p_income` (tract-level median personal income), and `state` (state in which event occurred). We will use the spatial data to investigate the geographic trends by state in police brutality incidents.The dataset does not include record of victims in South Dakota, Vermont, Puerto Rico, North Dakota and Rhode Island. Since, the data by Guardian is "verified crowd sourced", we cannot be completely sure that 0 police killings took place in the aforementioned states. Hence, in our analysis we treat those states as NAs. In our first and second research questions, we filtered our dataset so that `raceethnicity` is not equal to 'Unknown'. There are 15 observations in the data set with race as Unknown.
+
+To get state-level geometry and demographical data, tidycensus has been used which grants access to the 1-year and 5-year American Community Survey APIs. Through the package, the 2015 ACS data has been loaded for each state for the unweighted sample count of the population and population by race (White, Black, Hispanic, Native American, Asian and Pacific Islander). Alaska, Hawaii and Peurto Rico have been shifted and rescaled.
+
+**Research Question:**
+
+When conducting this analysis, our team sought to understand _whether police brutality incidents within the U.S. are proportional based on the race and socioeconomic status of victims? Additionally, does this dis-proportionality vary by geographic locations (states)?_ To examine this, we completed a three-part analysis of these variables and their influence on police brutality. We hypothesize that individuals belonging to minority racial groups and in tracts with lower median personal income will experience more police brutality than their White affluent counterparts.
+
+**Research Question 1: Is there dis-proportionality by race in police brutality victims?** On the basis of equality in the criminal justice system, police killings should be proportionally spread equally across all races. According to the U.S. Census Bureau's 2015 Data Profile, the white community makes up roughly 73.6% of the population. Thus, in the police brutality data set, we would expect 73.6% of victims to be white, and 26.4% to be minority groups. 
+
+**Research Question 2: Is there dis-proportionality by socio-economic status in police brutality victims?** Additionally, socioeconomic status should have no real impact on determining "high risk" populations for police brutality. Using the 2015 national median personal income of $33,040, one would expect that individuals both above and below this cut off would have equal rates of experiencing police brutality. To conduct this analysis we utilized tract-level data. 
+
+**Research Question 3: How does the dis-proportionality by race and socio-economic status vary across US states?** Lastly, we wished to explore geographic trends in the incidence of police brutality in United States. One would expect that states with larger populations have more police brutality, but we also sought to examine policy brutality in proportion to overall population across the United States. 
+
+## Methodology
+**Exploratory Data Analysis: **
+
+```{r histogram-by-race, echo = FALSE, warning = FALSE, fig.width = 5, fig.height = 2}
+police_brutality %>%
+  filter(raceethnicity != "Unknown") %>%
+  count(raceethnicity) %>%
+  mutate(prop = n / sum(n)) %>%
+  
+ggplot(mapping = aes(x = raceethnicity, y = prop, fill = raceethnicity)) +
+  geom_bar(stat = "identity") +
+  theme(legend.position = "none") +
+  labs(title = "FIGURE 1: Proportion of Police Killings by Race",
+       x = "Race",
+       y = "Proportion")
+```
+
+Figure 1 shows that the majority of victims in the data set are White (50.5%); followed by Black (28.9%), Hispanic/Latino (14.3%), Asian/Pacific Islander (2.14%) and Native American (0.857%). Given that the US is predominantly white however, it is important to look at the proportion of police killings per race.
+
+```{r loading-spatial-data, include = FALSE, message = F}
+state_geometry <- get_acs(survey = "acs1",
+                          geography = "state", 
+                 geometry = TRUE,
+                 year = 2015,
+                 variables = c(population = "B00001_001"),
+                 key = "07887b850cb1870572328ca954556fd5734ebe06") %>%
+  shift_geometry(geoid_column = "GEOID",
+  preserve_area = FALSE,
+  position = c("below", "outside")) %>%
+  st_transform(4326)
+
+#shifting points of Hawaii and Alaska
+police_brutality[police_brutality$name == "Bruce Zalonka", "longitude"] <- -105.7767
+police_brutality[police_brutality$name == "Bruce Zalonka", "latitude"] <- 26.59335
+police_brutality[police_brutality$name == "Jeffrey Surnow", "longitude"] <- -102.4456
+police_brutality[police_brutality$name == "Jeffrey Surnow", "latitude"] <- 24.74858
+police_brutality[police_brutality$name == "Michael Kocher Jr", "longitude"] <- -108.6605
+police_brutality[police_brutality$name == "Michael Kocher Jr", "latitude"] <- 27.23976
+police_brutality[police_brutality$name == "Sheldon Haleck", "longitude"] <- -105.7718
+police_brutality[police_brutality$name == "Sheldon Haleck", "latitude"] <- 26.58757
+police_brutality[police_brutality$name == "John Whittaker", "longitude"] <- -114.7302
+police_brutality[police_brutality$name == "John Whittaker", "latitude"] <- 24.28373
+police_brutality[police_brutality$name == "Larry Kobuk", "longitude"] <- -114.7317
+police_brutality[police_brutality$name == "Larry Kobuk", "latitude"] <- 24.28911
+
+    
+state_info <- get_acs(survey = "acs1",
+                      geography = "state",
+                 year = 2015,
+                 variables = c( population = "B02001_001",
+                                white = "B02001_002", 
+                                black = "B02001_003",
+                                hispanic = "B03002_012",
+                                native_amer = "B02001_004",
+                                asian = "B02001_005",
+                                nh.pi = "B02001_006"),
+                 key = "07887b850cb1870572328ca954556fd5734ebe06") %>%
+  dcast(NAME ~ variable, value.var = "estimate") #loading other census data and organizing it
+
+state <- state_geometry %>%
+  left_join(state_info) #joining census and geometry
+
+map <- police_brutality %>%
+  mutate(region = abbr2state(state)) %>%
+  right_join(state, by = c("region" = "NAME")) #joining police brutality dataset and spatial/census data
+```
+```{r race-by-population, echo = FALSE, message = FALSE, fig.width = 5, fig.height = 2}
+race <- police_brutality %>%
+  filter(raceethnicity != "Unknown") %>%
+  count(raceethnicity)
+
+population <- state_info %>%
+  summarize(`Asian/Pacific Islander` = sum(asian) + sum(nh.pi),
+            `Black` = sum(black),
+            `Hispanic/Latino` = sum(hispanic),
+            `White` = sum(white),
+            `Native American` = sum(native_amer)) %>%
+  melt()
+
+race <- race %>%
+  left_join(population, by = c("raceethnicity" = "variable")) %>%
+  mutate(prop = n / value * 10000)
+
+ggplot(data = race,
+       mapping = aes(x = raceethnicity, y = prop, fill = raceethnicity)) +
+  geom_bar(stat = "identity") +
+  theme(legend.position = "none") +
+  labs(title = "FIGURE 2: Proportion of \nPolice Killings per 10,000 people by Race",
+       x = "Race",
+       y = "Victims per 10,000 people")
+```
+
+Figure 2 shows that when analyzing police killings in context of population share of each group, the proportion of Black victims is the highest. (The number of Victims per 10,000 Black individuals is 0.0329) followed by Native Americans (0.0153), Hispanic/Latinos (0.011), Whites (0.010),and Asian/Pacific Islanders (0.006). This indicates some dis-proportionality by race because we would expect all proportions to be the same.
+
+```{r observed-expected, echo = F, warning = F, fig.width = 5, fig.height = 3}
+race %>%
+  select(-c(4)) %>%
+  rename(Expected = value,
+         Observed = n) %>%
+  melt(id = "raceethnicity") %>%
+  
+ggplot(mapping = aes(x = variable, y = value, fill = raceethnicity)) +
+  geom_col(position = "fill") +
+  labs(title = "FIGURE 3: \nProportion of Police Killings by Race",
+       subtitle = "Expected from 2015 ACS vs Observed from Data",
+       fill = "Race/Ethnicity",
+       x = "",
+       y = "Proportion")
+```
+
+Figure 3 compares the expected proportion of police brutality cases by race based on the 2015 American Community Survey data and the observed data. The segmented bar chart shows that the proportion of observed white victims is less than the expected while the proportion of observed black victims is significantly greater than the expected. The Native American segment is almost invisible because of the small proportion of police brutality cases on Native Americans. We found the expected to be .0073 and the observed to be .0085, continually indicating a dis-proportionality. 
+
+```{r income-dist, echo = F, warning = F, message = FALSE, fig.width = 5, fig.height = 2}
+police_brutality %>%
+  filter(raceethnicity != "Unknown",
+         p_income != "-") %>%
+  ggplot(aes(x = as.numeric(p_income))) +
+    geom_histogram(aes(y = ..density..), fill = "purple", color = "white", alpha = .5) +
+    geom_density() +
+    labs(title = "FIGURE 4: \nDistribution of the Median Personal Income in Tracts
+Where Police Brutality Occurred",
+         x = "Tract Median Personal Income", 
+y = "Density")
+```
+
+Figure 4 shows the distribution of the median personal income in tracts where police brutality occurred. The plot shows that the majority of incidents took place in tracts where the median personal income was around 20000 USD. For context, the median personal income in 2015 was 33,040 USD according to the US Census Bureau while the poverty threshold for a 1 person family was 11,770 USD with 4,160 USD added for each additional person.
+
+```{r density-viz, echo = FALSE, warning = F, message = FALSE, fig.width = 5, fig.height = 3}
+poverty <- police_brutality %>%
+  filter(p_income != "-") %>%
+  mutate(p_income_num = as.numeric(p_income)) %>%
+  select(p_income_num)
+
+police_brutality %>%
+  filter(raceethnicity != "Unknown",
+         p_income != "-") %>%
+  ggplot(aes(x = as.numeric(p_income), y = raceethnicity, fill = factor(stat(quantile)))) +
+    stat_density_ridges(
+      geom = "density_ridges_gradient", calc_ecdf = TRUE,
+      quantiles = 4, quantile_lines = TRUE) +
+    scale_fill_viridis(discrete = TRUE, option = "D", name = "Quantile", alpha = .7) +
+    labs(title = "FIGURE 5:
+Distribution of the Median Personal Income in 
+Tracts Where Police Brutality Occurred", 
+         subtitle = "By Race",
+         x = "Median Personal Income",
+         y = "Race")
+```
+
+Figure 5 shows the distribution of median household income in tracts where police brutality occurred by race. In almost all groups, the majority of the distribution has a median household income lower than 25000$ implying that police brutality incidents might tend to occur in tracts with lower median personal income.
+
+```{r stacked-bar-plot, echo = F, warning = F, fig.width = 5, fig.height = 2.5}
+police_brutality <- police_brutality %>%
+  mutate(region = case_when(state == "ND" | state == "SD" | state == "NE" | state == "KS" | state == "MO" | state ==                               "IA" | state == "MN" | state == "WI" | state == "MI" | state == "IL" | state == "IN" |                                 state == "OH"  ~ "Midwest",
+                            state == "CO" | state == "ID" | state == "MT" | state == "NV" | state == "UT" | state ==                               "WY" | state == "AK" | state == "CA" | state == "HI" | state == "OR" | state == "WA" |                                 state == "AZ"| state == "NM" | state == "AR" ~ "West",
+                            state == "CT" | state == "ME" | state == "MA" | state == "NH" | state == "NY" | state ==                               "NJ" | state == "PA" | state == "RI" | state == "VT" | state == "DE" | state == "MD"  |                                state == "DC" ~ "North East",
+                            state == "VA" | state == "WV" | state == "KY" | state == "TN" | state == "LS" | state ==                               "SC" | state == "FL" | state == "GA" | state == "AL" | state == "TX" | state == "OK" |                                 state == "MS" | state == "LA" | state == "NC"~ "South"))
+
+ggplot(data = police_brutality, mapping = aes(x = region, fill = raceethnicity)) +
+  geom_bar(position = "fill") +
+  scale_fill_viridis(discrete = TRUE, option = "D", name = "Race") +
+  labs(title= "FIGURE 6: \nProportion of Incidents By Race In Each Region", 
+       x = "U.S. Region", 
+       y = "Proportion")
+```
+
+Figure 6 shows the breakdown of police brutality cases by race in each region. Across all regions, White people make up roughly 50% of the cases. Although the proportions vary, Black people tend to make up the next greatest proportion, then Hispanic/Latinos, then Asian/Pacific Islanders, then Native Americans. 
+
+```{r socio-stacked, echo = F, warning = F, fig.width = 5, fig.height = 2}
+police_brutality %>%
+  filter(p_income != "-") %>%
+ggplot(mapping = aes(x = region, fill = as.numeric(p_income), group = as.numeric(p_income))) + 
+ geom_bar(position = "fill") +
+  scale_fill_gradient2(low = "red",
+  mid = "white",
+  high = "blue",
+  midpoint = 33040) +
+  labs(x = "U.S. Region",
+       y = "Proportion",
+       title = "FIGURE 7: \nProportion of Police Brutality Incidents By \nTract-Level Median Personal Income",
+       fill = "Income")
+```
+
+Figure 7 shows that in all the regions the majority of incidents occurred in places with tract-level median personal income lower than 33040 USD (U.S. Median Personal Income). It is notable that in North East the distribution by income is more varied as compared to other regions.
+
+```{r shifting-HI-AK, include = FALSE}
+#finding transformations of points for Hawaii and Alaska
+
+Hawaii <- police_brutality %>%
+  filter(state == "HI") %>%
+  select(longitude, latitude, state, region) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+
+Alaska <- police_brutality %>%
+  filter(state == "AK") %>%
+  select(longitude, latitude, state, region) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+
+Hawaii %>%
+  shift_geometry(geoid_column = NULL,
+  preserve_area = FALSE,
+  position = c("below", "outside")) %>%
+  st_transform(4326)
+
+Alaska %>%
+  shift_geometry(geoid_column = NULL,
+  preserve_area = FALSE,
+  position = c("below", "outside")) %>%
+  st_transform(4326)
+```
+
+```{r map1-ethnicity, echo = F, warning = F, fig.width = 7, fig.height = 3}
+map %>%
+ggplot(aes(color = raceethnicity)) +
+    geom_sf(aes(geometry = geometry, color = NULL)) +
+    geom_point(data = . %>% filter(raceethnicity != "NA"), aes(x = longitude, y = latitude)) +
+  labs(title = "FIGURE 8:
+Geography of Victims of Police Brutality (by Race/Ethnicity)",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Race/Ethnicity") +
+  theme_bw()
+```
+
+Figure 8 shows the geographic location of police brutality cases and colors each point bases on the race of the victim. The data is relatively spread out across the map, and a majority of points represent a White victim. A later analysis will investigate the break down of the cases by proportion rather than the absolute number of cases. 
+
+```{r map1-income, echo = F, warning = F, fig.width = 7, fig.height= 3}
+map %>%
+ggplot(aes(color = as.factor(county_bucket))) +
+    geom_sf(aes(geometry = geometry, color = NULL)) +
+    geom_point(data = . %>% filter(county_bucket != "NA"), aes(x = longitude, y = latitude)) +
+  labs(title = "FIGURE 9:
+Geography of Victims (by Household income, quintile within county)",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Household income\nquintile within county") +
+  theme_bw()
+```
+
+Figure 9 shows the geographic location of police brutality cases and colors each point based on the household income quintile within the country. The data is relatively spread out throughout the map, and there is no clear trend of quintiles. A later analysis will investigate the relationship between income and police brutality. 
+
+**Analytic Methods: **
+To check for dis-proportionality by race and socio-economic status, we used Hypothesis Testing. Hypothesis testing allows for us to determine if the data we observed was by chance. It is important to determine if the data we are analyzing is appropriate and reflective rather than coincidental. We further analyzed trends in police brutality spatially at the state-level by mapping the data and combining it with the American Community Survey data to account for differences in population.
+
+**Research Question 1:** 
+Exploring the racial trends in the incidence of police brutality in United States.
+
+$H_0$: the proportion of police killings in which the victim is white is equal to 0.763
+
+$H_a$: the proportion of police killings in which the victim is white is not equal to 0.763
+$$H_0 : p = 0.763  \text{ vs. } H_a : p \neq 0.763$$
+Using a .05 significance level.
+
+```{r, new-variable, echo = FALSE, message = F, warning = F}
+white_identification <- police_brutality %>%
+  filter(raceethnicity != "Unknown") %>%
+  mutate(white_id = ifelse(raceethnicity == "White", 1, 0)) %>%
+  select(name, white_id)
+```
+```{r, hypothesis-test-race, echo = FALSE, message = F, warning = F, fig.width = 5, fig.height = 2}
+set.seed(7)
+null_dist1 <- white_identification %>%
+  specify(response = white_id) %>%
+  hypothesize(null = "point", mu = 0.763) %>%
+  generate(10000, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+obs_prop <- white_identification %>%
+  summarise(mean_identification = mean(white_id))
+
+visualize(null_dist1) +
+  shade_p_value(obs_stat = obs_prop, direction = "two-sided") +
+  labs(x = "Proportion of White Victims",
+       y = "Count")
+```
+```{r, getting-p-value, echo = FALSE, message = F, warning = F}
+null_dist1 %>%
+  get_p_value(obs_stat = obs_prop, direction = "two-sided") %>%
+  kable
+```
+
+**Research Question 2:** 
+Exploring the socioeconomic trends in the incidence of police brutality in United States.
+
+$H_0$: the median personal income in tracts where police brutality occurred is $33,040, the national median annual personal income.
+
+$H_a$: the median personal income in tracts where police brutality occurred is less than $33,040, the national median annual personal income.
+
+$$H_0: M = 33,040 \text{ vs. }H_a: M < 33,040$$
+Using a .05 significance level.
+
+```{r null-dist2, echo = FALSE, message = F, warning = F}
+set.seed(7)
+
+null_dist2 <- poverty %>%
+  specify(response = p_income_num) %>%
+  hypothesize(null = "point", med = 33040) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "median")
+```
+```{r viz, echo = FALSE, message = F, warning = F, fig.width = 5, fig.height = 2}
+obs_stat <- poverty %>% 
+  summarize(median(p_income_num)) %>%
+  pull()
+  
+
+visualize(null_dist2) +
+  shade_p_value(obs_stat = obs_stat, direction = "less") +
+  labs(x = "Tract Median Personal Income in Dollars", 
+       y = "Count")
+
+get_p_value(null_dist2, obs_stat, direction = "less") %>%
+  kable
+```
+
+**Research Question 3:**
+Exploring geographic trends in the incidence of police brutality in United States
+
+```{r map3, echo = FALSE, fig.width = 9, fig.height = 3}
+map %>%
+  group_by(region) %>%
+  mutate(victims = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, n())) %>%
+  mutate(prop = victims/population * 10000) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "Number of Police Brutality Victims per 10000 people",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_white, echo = FALSE, fig.width= 9, fig.height= 3}
+victims <- map %>%
+  group_by(region, raceethnicity) %>%
+  count() %>%
+  dcast(region ~ raceethnicity, value.var = "n") %>%
+  mutate(total_victims = rowSums(.[2:7], na.rm = TRUE)) %>%
+  select(-c(6, 8)) %>% #excluding Unknowns and NA columns
+  replace(is.na(.), 0)
+
+victims <- victims %>% 
+  left_join(state, by = c("region" = "NAME"))
+  
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, `White`/white * 10000)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "White Police Brutality Victims by Population Share",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_black, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, `Black`/black * 10000)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "Black Police Brutality Victims by Population Share",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_hispanic, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, `Hispanic/Latino`/hispanic * 10000)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "Hispanic Police Brutality Victims by Population Share",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_native, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, `Native American`/native_amer * 10000)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "Native American Police Brutality Victims by Population Share",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_asian, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, `Asian/Pacific Islander`/asian + nh.pi * 10000)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(title = "Asian/Pacific Islander Police Brutality Victims by Population Share",
+       fill = "Victims per \n10000 people",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_diff, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, 
+                       white/population - `White`/total_victims)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(subtitle = "Which state has the greatest difference in \npopulation share of white people and proportion of white victims?",
+       fill = "Difference",
+       x = "Longitude",
+       y = "Latitude")
+```
+```{r map_diff2, echo = FALSE, fig.width = 9, fig.height = 3}
+victims %>%
+  mutate(prop = ifelse(region == "North Dakota" |
+                          region == "South Dakota" |
+                          region == "Vermont" |
+                          region == "Rhode Island" |
+                          region == "Puerto Rico", NA, 
+                       black/population - `Black`/total_victims)) %>%
+  
+ggplot(aes(fill = prop,
+           geometry = geometry)) +
+  geom_sf() +
+  scale_fill_gradient(low = "#fee8c8", high = "#7f0000") +
+  labs(subtitle = "Which state has the greatest difference in \npopulation share of black people and proportion of black victims?",
+       fill = "Difference",
+       x = "Longitude",
+       y = "Latitude")
+```
+
+## Results
+
+**Research Question 1:**
+
+The p-value of our hypothesis test is less than the significance level of 0.05, which means that the results are statistically significant and we can reject the null hypothesis. This would imply that there is strong evidence suggesting that the proportion of police killings in which the victim is white is not equal to 0.763. Thus, the data suggests that there is a disparity in police brutality cases on the basis of race. When breaking down the frequency of police brutality cases by race, white people make up the largest percentage of police brutality cases. However, this is not surprising given that white people make up an overwhelming majority of the U.S. population. On the other hand, black people make up a larger percentage of police brutality cases than they make up the population. More specifically, the proportion of black police brutality victims is roughly equal to .3, and the U.S. Census 2015 tells us that black individuals made up a proportion equal to .127 of the U.S. population. Looking closer at the geographic region (midwest, northeast, south, and west) of police brutality victims and the proportion of cases by race, all four regions show white people making up a large proportion of cases, and three regions show black people making up a comparable proportion. We can conclude that there is a nationwide issue with police brutality cases on black individuals given that the proportion of cases by race is not equal to the 2015 Census demographic breakdown. 
+
+**Research Question 2:**
+
+The p-value of our hypothesis test is less than the significance level of 0.05 which means that the results are statistically significant and we can reject the null hypothesis. This would imply that there is strong evidence suggesting that the median personal income in counties where police brutality occurred is less than the national median personal income of $33,040. Thus, a disparity between income and police brutality is likely to exist. Those who make less than the national median personal income may be more at risk of police brutality.
+
+**Research Question 3:**
+
+Analyzing the number of victims per 10000 people in each state tells us where police brutality cases are the most common per capita- this proportion is highest in the state of Oklahoma and Arizona. When comparing the number of White police brutality cases to the state’s share of White people, Oklahoma has the highest proportion of cases. However, when comparing the number of Black police brutality cases to the state’s share of Black individuals, three states (Oklahoma, Nebraska, and Colorado) clearly represent the largest disparity. Hispanics are largely at risk of police brutality in Alaska, given that Alaska has the largest proportion of Hispanic police brutality cases when compared to the state’s share of Hispanics. When comparing the share of Native American police brutality cases to the state’s overall share of Native Americans, once again, three states (Arizona, Washington, and Alaska) have a high proportion of cases. When looking at the proportion of Asian/Pacific Islander brutality cases and comparing it to the state’s overall share of Asian/Pacific Islanders, California has the highest proportion of Asian/Pacific Islander police brutality cases by the demographics population. Lastly, when graphing the differences in the population share of a given demographic and the proportion of police brutality victims of the same demographic, it is clear that White and Black people are at varying risks. White people, as shown on the map, have the largest difference in the share of the state’s population and the proportion of White police brutality cases nationwide. This indicates that the proportion of White police brutality cases is far less than the proportion of White people in that given state. However, when looking at the Black population, Black people have a small difference in proportions in almost every state. This indicates that the proportion of Black police brutality cases in nearly every state is almost identical, if not more than, the proportion of Black individuals in that given state. The median difference in population vs. victim proportion for White people is 0.169 while the median difference in the same for Black people is -0.127. It is clear that the proportion of police brutality cases do not mirror the population proportion of each demographic. Thus, we can conclude that there is a large disparity of police brutality cases in a majority of states across the United States.
+
+## Discussion
+
+**Conclusions: **
+Our analyses reveal evidence that police brutality within the U.S. is not proportionate across race, socioeconomic status, and geography. Many recent research studies support such findings and are linked in our references section. 
+
+Our three separate analyses reveal that there is strong evidence suggesting that the proportion of police killings in which the victim is white is not equal to 0.763, which would indicate equity in police brutality based on race, that there is strong evidence suggesting that the median personal income in counties where police brutality occurred is less than the national median personal income of $33,040, and spatial analyses reveal that the number of victims is highest in California when evaluating absolute number but highest in Oklahoma when evaluating police brutality in relation to overall population. 
+
+After doing a little more research into this last finding regarding Oklahoma, we hypothesize several reasons why rates of police brutality in relation to overall population are highest in Oklahoma. According to The Black Wall Street Times, Oklahoma has one of the top three highest incarceration rates in this country. The state's history with such high incarceration rates could impact the types of trainings that police officers take in the state as well as the population of individuals who seek to become police officers in the state. The Oklahoman reports that there are "stark differences between how white and Black residents view the Oklahoma City Police Department, whether they believe race plays a part in police conduct, and how much coverage they think local media adequately pays to problems within policing." Such high tensions could also play a role in how police respond to incidents involving minority citizens. 
+
+**Limitations: **
+There are several limitations to using this data set to conduct these analyses. 
+
+First, this dataset is from 2015 and some might argue that racial biases and discrimination, especially associated with police brutality, have worsened in this country since then. 
+
+Next, this dataset utilized only a sample of police brutality from data reported by an FBI program in which law enforcement agencies voluntarily submit their annual count of “killings of a felon in the line of duty”. This voluntary submission of killings likely exclude additional incidents of police brutality and discrimination that were not submitted by law enforcement agencies. The dataset does not include record of victims in South Dakota, Vermont, Puerto Rico, North Dakota and Rhode Island. It cannot be assumed that there were 0 victims in the aforementioned states.
+
+**Further Research: **
+We attempted to create a linear regression model to check how the proportion of victims in each state can be explained by population share of different racial groups (prop_victims = white.pop + hispanic.pop + black.pop + nativeamerican.pop)as well as a beta regression model to check how the variance in police brutality cases across states can be explained by factors like race of victims and median tract level personal income (y = race + median_income, where y is the proportion of victims in each state by race). 
+
+However, given the small number of observations for each state the models didn't yield statistically significant results. For further research, this dataset can be combined with record of police brutality victims over time to check how the proportion of victims in different states can be explained/predicted through race/socio-economic status of victims. 
+
+If we were to start over, we'd want to combine our dataset with other datasets of victims over time for a more comprehensive analysis.
+
+## References
+
+- https://www.amnesty.org/en/what-we-do/police-brutality/
+- https://theblackwallsttimes.com/2021/10/04/oklahoma-police-most-deadly-of-all-50-states-study-shows/
+- https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(21)01609-3/fulltext
+- https://www.oklahoman.com/story/news/2021/12/01/oklahoma-city-police-department-poll-racial-divide-public-views/8806996002/ 
+- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7331505/
+- https://news.yale.edu/2020/10/27/racial-disparity-police-shootings-unchanged-over-5-years
+- http://www.healthdata.org/news-release/lancet-more-half-police-killings-usa-are-unreported-and-black-americans-are-most-likely
+- https://www.usccr.gov/files/2021/05-26-OK-SAC-Advisory-Memorandum-Racial-Disparities-in-Policing.pdf 
+- https://bjs.ojp.gov/content/pub/pdf/cpp15.pdf 
+- https://mappingpoliceviolence.org 
+- https://www.pnas.org/content/116/34/16793 
